@@ -1,1 +1,107 @@
-ttttt
+# Créer une Pipeline GitLab pour Ajouter un StartupProbe
+
+Voici comment créer une pipeline GitLab qui modifie votre configuration pour ajouter un StartupProbe dans une branche spécifique.
+
+## Fichier `.gitlab-ci.yml` pour cette tâche
+
+```yaml
+stages:
+  - modify
+  - verify
+  - commit
+
+variables:
+  TARGET_BRANCH: "feature/add-startup-probe"  # Branche cible
+  CONFIG_FILE: "deployment.yaml"              # Fichier de configuration à modifier
+
+add_startup_probe:
+  stage: modify
+  image: alpine/k8s:1.26.6                   # Image avec kubectl et outils nécessaires
+  script:
+    - |
+      # Vérifie si le fichier de configuration existe
+      if [ ! -f "$CONFIG_FILE" ]; then
+        echo "Le fichier $CONFIG_FILE n'existe pas"
+        exit 1
+      fi
+
+      # Ajoute le StartupProbe dans le fichier YAML
+      yq eval -i '
+        .spec.template.spec.containers[0].startupProbe = {
+          httpGet: {
+            path: /health-startup
+            port: 8080
+          },
+          initialDelaySeconds: 5,
+          periodSeconds: 5,
+          failureThreshold: 10
+        }
+      ' "$CONFIG_FILE"
+
+      echo "StartupProbe ajouté au fichier $CONFIG_FILE"
+  only:
+    - $TARGET_BRANCH
+
+verify_changes:
+  stage: verify
+  image: alpine/k8s:1.26.6
+  script:
+    - yq eval '.spec.template.spec.containers[0].startupProbe' "$CONFIG_FILE"
+    - echo "Vérification que le StartupProbe est bien configuré"
+  only:
+    - $TARGET_BRANCH
+
+commit_changes:
+  stage: commit
+  image: alpine/git:latest
+  script:
+    - git config --global user.email "gitlab-bot@example.com"
+    - git config --global user.name "GitLab Bot"
+    - git checkout $TARGET_BRANCH
+    - git add "$CONFIG_FILE"
+    - git commit -m "Ajout du StartupProbe [skip ci]"
+    - git push "https://${GITLAB_USER_NAME}:${GITLAB_ACCESS_TOKEN}@${CI_REPOSITORY_URL#*@}" HEAD:$TARGET_BRANCH
+  only:
+    - $TARGET_BRANCH
+  when: manual  # Optionnel: permet de valider manuellement le commit
+```
+
+## Prérequis
+
+1. **Outils nécessaires**:
+   - L'image `alpine/k8s` contient `yq` pour manipuler les fichiers YAML
+   - L'image `alpine/git` pour les opérations Git
+
+2. **Variables à configurer**:
+   - `GITLAB_ACCESS_TOKEN`: Un token d'accès avec permissions d'écriture
+   - `GITLAB_USER_NAME`: Le nom d'utilisateur associé au token
+
+3. **Structure du fichier YAML**:
+   - Le script suppose que votre fichier de déploiement a une structure standard Kubernetes
+   - Adaptez le chemin `.spec.template.spec.containers[0]` selon votre configuration
+
+## Personnalisation
+
+1. **Pour modifier les paramètres du StartupProbe**:
+   ```yaml
+   startupProbe = {
+     httpGet: {
+       path: /votre-chemin-health  # Modifier le chemin
+       port: votre-port            # Modifier le port
+     },
+     initialDelaySeconds: 10,      # Délai initial
+     periodSeconds: 3,             # Fréquence des checks
+     failureThreshold: 5           # Nombre d'échecs tolérés
+   }
+   ```
+
+2. **Pour cibler un autre fichier**:
+   ```yaml
+   variables:
+     CONFIG_FILE: "k8s/deployment-prod.yaml"
+   ```
+
+Cette pipeline va:
+1. Modifier le fichier YAML pour ajouter le StartupProbe
+2. Vérifier que les changements sont corrects
+3. Committer et pousser les modifications (optionnellement après validation manuelle)
